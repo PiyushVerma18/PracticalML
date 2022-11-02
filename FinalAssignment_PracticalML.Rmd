@@ -1,0 +1,163 @@
+---
+title: "Final Assignment_PracticalML"
+author: "Piyush"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har
+
+The training and test data for this project are available in this two url’s:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+## Data Loading and Processing
+
+
+```{r Data Loading and Processing, echo=TRUE}
+
+set.seed(123)
+library(dplyr)
+library(caret)
+library(rpart)
+library(knitr)
+library(lattice)
+library(ggplot2)
+library(randomForest)
+library(data.table)
+library(gbm)
+library(rattle)
+library(rpart.plot)
+library(RColorBrewer)
+library(cowplot)
+
+totalset<-read.csv("~/R files/pml-training.csv",header = TRUE)
+testset<-read.csv("~/R files/pml-testing.csv",header = TRUE)
+
+
+```
+
+## Cleaning and Exploratory Data Analysis
+
+```{r Cleaning and Exploratory Data Analysis, echo=TRUE}
+
+#Convert empty values with NA
+totalset[totalset == ""] <- NA
+testset[testset == ""] <- NA
+
+#Now we will be removing those columns where most values are NA
+totalset<-totalset[, which(colMeans(!is.na(totalset)) > 0.5)]
+testset<-testset[, which(colMeans(!is.na(testset)) > 0.5)]
+
+#Now we will remove initial ID and identification variables from the set
+
+totalset <- totalset[ , -(1:6)]
+testset  <- testset [ , -(1:6)]
+
+```
+
+## Train-Validation Split
+
+```{r Train-Validation Split, echo=TRUE}
+
+datapartition<-createDataPartition(totalset$classe,p=0.75,list = FALSE)
+trainingset<-totalset[datapartition,]
+cvset<-totalset[-datapartition,]
+
+```
+
+## Model Testing
+
+Here, we will try different models and will select the best one based on the its accuracy on Validation set.
+
+## Decision Tree
+
+```{r Decision Tree, echo=TRUE}
+
+#First we will try simple decison tree
+
+DT_Model<-rpart(classe ~ .,data=trainingset,method="class")
+DT_outofsample<-predict(DT_Model,trainingset,type = 'class')
+confusionMatrix(table(DT_outofsample, trainingset$classe))
+
+DT_predict<-predict(DT_Model,cvset,type = 'class')
+confusionMatrix(table(DT_predict, cvset$classe))
+
+
+```
+
+So we are getting around 76.5% accuracy on the trainingset and 75% after testing on Validation set from this simple decision tree.
+
+## Now we will try to form the Random forest model
+
+```{r Random Forest, echo=TRUE}
+
+set.seed(1967)
+rf_Model<-randomForest(as.factor(classe) ~ ., data = trainingset,proximity=TRUE)
+rf_Model
+```
+
+Now we will plot the error data vs the number of trees
+
+```{r, echo=TRUE}
+
+oob.error.data<-data.frame(Trees=rep(1:nrow(rf_Model$err.rate),times=1),Type=rep(c("Total error"),each=nrow(rf_Model$err.rate)),Error=c(rf_Model$err.rate[,"OOB"]))
+                 
+ggplot(data=oob.error.data,aes(x=Trees,y=Error))+geom_line(aes(color=Type))          
+
+```
+
+So as we can see that after total no. of trees crossed 100, there is not any significant change in total error so we can set optimal number of trees at 100.
+
+Now we can experiment with different number of splits to be considered at each node.
+
+```{r, echo=TRUE}
+
+rftrial<-vector(length = 12)
+
+for (i in 4:15){
+  tempmodel<-randomForest(as.factor(classe) ~ ., data = trainingset,mtry=i,ntree=100)
+  rftrial[i]<-tempmodel$err.rate[nrow(tempmodel$err.rate),1]
+}
+
+rftrial
+```
+
+
+So we can note that keeping no. of splits at 10 will be our best solution
+So finally, we will select this combination of ntree=100 and mtry=10 and will test this model on our cvset.
+
+## Random Forest Final Model
+```{r, echo=TRUE}
+
+rf_finalModel<-randomForest(as.factor(classe) ~ ., data = trainingset,mtry=10,ntree=100,proximity=TRUE)
+
+predict_trainingdata<-predict(rf_finalModel, newdata = trainingset)
+confusionMatrix(table(predict_trainingdata, trainingset$classe))
+
+
+predict_RF <- predict(rf_finalModel, newdata = cvset)
+confusionMatrix(table(predict_RF, cvset$classe))
+```
+
+So we are getting 100% accuracy on the trainingdata and 99.9% accuracy with this model on our CVset which is really good.So, we will finalise this as our final model.
+
+## Prediction on Testing Set
+
+Now, we will use this model to get the prediction on our test data.
+
+```{r, echo=TRUE}
+
+test_predict<-predict(rf_finalModel, newdata = testset[,-54])
+test_predict
+
+```
